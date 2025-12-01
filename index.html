@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Munneler - Melbourne Metro Tunnel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0a0a15;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+<body>
+    <script src="https://unpkg.com/kaplay@3001/dist/kaplay.js"></script>
+    <script>
+// ============================================
+// CONFIGURATION
+// ============================================
+const CONFIG = {
+    WIDTH: 320,
+    HEIGHT: 480,
+
+    BASE_SPEED: 150,
+    SPEED_INCREASE: 0.1,
+    BRAKE_DECEL: 400,
+
+    TARGET_X: 220,  // Right side of screen
+    TRAIN_START: -500,
+    TRAIN_WIDTH: 490,  // 5 passenger carriages (90px each) + driver cab sprite (~40px)
+    TRAIN_HEIGHT: 40,
+    CARRIAGE_WIDTH: 90,
+    NUM_CARRIAGES: 6,  // 5 passenger + 1 driver
+    CORRECTION_SPEED: 80,
+    POINT_DRAIN_RATE: 1,
+
+    MISS_THRESHOLD: 100,
+
+    ZONES: {
+        PERFECT: 3,   // Tighter precision required for perfect
+        GREAT: 15,
+        GOOD: 30,
+        OK: 50
+    },
+
+    STATIONS: ['Arden', 'Parkville', 'State Library', 'Town Hall', 'Anzac'],
+
+    COLORS: {
+        BG: [26, 26, 46],
+        PLATFORM: [74, 74, 106],
+        PLATFORM_EDGE: [255, 200, 0],
+        // HCMT Train colors
+        TRAIN_SILVER: [168, 170, 170],  // #a8aaaa
+        TRAIN_BLUE_LIGHT: [100, 180, 220],
+        TRAIN_BLUE_DARK: [30, 80, 140],
+        TRAIN_CHARCOAL: [50, 55, 65],
+        TRAIN_YELLOW: [255, 200, 0],
+        TRAIN_WINDOW: [26, 26, 46],
+        TRAIN_DOOR: [255, 200, 0],
+        TARGET: [255, 200, 0],
+        SCREEN_DOOR: [40, 40, 60],
+        SCREEN_DOOR_FRAME: [60, 60, 80],
+        TEXT: [255, 255, 255],
+        PERFECT: [46, 204, 113],
+        GREAT: [52, 152, 219],
+        GOOD: [241, 196, 15],
+        OK: [230, 126, 34],
+        MISS: [231, 76, 60]
+    }
+};
+
+// ============================================
+// SOUND SYSTEM (Web Audio API)
+// ============================================
+let audioCtx = null;
+
+function initAudio() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+}
+
+function playTone(frequency, duration, type = 'sine', volume = 0.3) {
+    if (!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = frequency;
+    gain.gain.value = volume;
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+function playBrake() {
+    if (!audioCtx) return;
+    const bufferSize = audioCtx.sampleRate * 0.3;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+    }
+    const source = audioCtx.createBufferSource();
+    const filter = audioCtx.createBiquadFilter();
+    const gain = audioCtx.createGain();
+    source.buffer = buffer;
+    filter.type = 'lowpass';
+    filter.frequency.value = 800;
+    filter.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.3);
+    gain.gain.value = 0.2;
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+    source.start();
+}
+
+function playPerfect() {
+    playTone(880, 0.15, 'sine', 0.3);
+    setTimeout(() => playTone(1100, 0.2, 'sine', 0.3), 100);
+}
+
+function playGreat() {
+    playTone(660, 0.15, 'sine', 0.25);
+    setTimeout(() => playTone(880, 0.15, 'sine', 0.25), 80);
+}
+
+function playGood() {
+    playTone(440, 0.2, 'square', 0.15);
+}
+
+function playOk() {
+    playTone(330, 0.2, 'triangle', 0.2);
+}
+
+function playMiss() {
+    playTone(220, 0.3, 'sawtooth', 0.15);
+    setTimeout(() => playTone(165, 0.3, 'sawtooth', 0.15), 150);
+}
+
+function playCorrection() {
+    playTone(200, 0.1, 'sine', 0.1);
+}
+
+function playGameOver() {
+    playTone(440, 0.3, 'sine', 0.2);
+    setTimeout(() => playTone(349, 0.3, 'sine', 0.2), 200);
+    setTimeout(() => playTone(294, 0.3, 'sine', 0.2), 400);
+    setTimeout(() => playTone(220, 0.5, 'sine', 0.2), 600);
+}
+
+// ============================================
+// HIGH SCORES
+// ============================================
+function getHighScores() {
+    try {
+        const scores = localStorage.getItem('munneler_highscores');
+        return scores ? JSON.parse(scores) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveHighScore(score) {
+    const scores = getHighScores();
+    scores.push(score);
+    scores.sort((a, b) => b - a);
+    const top5 = scores.slice(0, 5);
+    localStorage.setItem('munneler_highscores', JSON.stringify(top5));
+    return top5;
+}
+
+function isHighScore(score) {
+    const scores = getHighScores();
+    return scores.length < 5 || score > scores[scores.length - 1];
+}
+
+// ============================================
+// KAPLAY INITIALIZATION
+// ============================================
+kaplay({
+    width: CONFIG.WIDTH,
+    height: CONFIG.HEIGHT,
+    scale: 2,
+    crisp: true,
+    letterbox: true,
+    background: CONFIG.COLORS.BG,
+    font: "monospace",
+});
+
+// Load driver cab sprite
+loadSprite("driverCab", "driver.png");
+
+// ============================================
+// TITLE SCENE
+// ============================================
+scene("title", () => {
+    // Title
+    add([
+        text("MUNNELER", { size: 32 }),
+        pos(center().x, 80),
+        anchor("center"),
+        color(255, 200, 0),
+    ]);
+
+    add([
+        text("Melbourne Metro Tunnel", { size: 12 }),
+        pos(center().x, 115),
+        anchor("center"),
+        color(200, 200, 200),
+    ]);
+
+    // Instructions
+    add([
+        text("Stop the train at\nthe platform doors", { size: 10 }),
+        pos(center().x, 180),
+        anchor("center"),
+        color(150, 150, 150),
+    ]);
+
+    add([
+        text("TAP or SPACE to brake", { size: 10 }),
+        pos(center().x, 220),
+        anchor("center"),
+        color(150, 150, 150),
+    ]);
+
+    // High score
+    const highScores = getHighScores();
+    if (highScores.length > 0) {
+        add([
+            text(`HIGH SCORE: ${highScores[0]}`, { size: 14 }),
+            pos(center().x, 280),
+            anchor("center"),
+            color(46, 204, 113),
+        ]);
+    }
+
+    // Draw mini train (simplified)
+    const trainY = 340;
+    // Silver passenger section
+    add([
+        rect(50, 20),
+        pos(center().x - 15, trainY),
+        anchor("center"),
+        color(...CONFIG.COLORS.TRAIN_SILVER),
+    ]);
+    // Blue door
+    add([
+        rect(8, 16),
+        pos(center().x - 15, trainY),
+        anchor("center"),
+        color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT),
+    ]);
+    // Driver cab sprite (stretched for mini train, positioned to connect)
+    add([
+        sprite("driverCab"),
+        pos(center().x + 10, trainY - 10),
+        scale(vec2(20 / 476, 20 / 438)),  // Stretch to ~20x20 for mini train
+    ]);
+
+    // Start prompt
+    const startText = add([
+        text("TAP TO START", { size: 14 }),
+        pos(center().x, 420),
+        anchor("center"),
+        color(255, 255, 255),
+    ]);
+
+    // Blink
+    let visible = true;
+    loop(0.5, () => {
+        visible = !visible;
+        startText.opacity = visible ? 1 : 0;
+    });
+
+    // Input
+    const startGame = () => {
+        initAudio();
+        go("game", { station: 0, totalScore: 0 });
+    };
+
+    onKeyPress("space", startGame);
+    onClick(startGame);
+});
+
+// ============================================
+// GAME SCENE
+// ============================================
+scene("game", ({ station, totalScore }) => {
+    // Game state
+    let phase = "approaching";
+    let velocity = CONFIG.BASE_SPEED * (1 + station * CONFIG.SPEED_INCREASE);
+    let scoreThisRound = 0;
+    let rating = "";
+    let ratingColor = CONFIG.COLORS.TEXT;
+    let correctionTarget = CONFIG.TARGET_X;
+    let correctionSoundTimer = 0;
+
+    const stationName = CONFIG.STATIONS[station % CONFIG.STATIONS.length];
+    const stationNumber = station + 1;
+
+    // Platform
+    add([
+        rect(CONFIG.WIDTH, 60),
+        pos(0, CONFIG.HEIGHT - 60),
+        color(...CONFIG.COLORS.PLATFORM),
+    ]);
+
+    // Platform edge (yellow safety line)
+    add([
+        rect(CONFIG.WIDTH, 4),
+        pos(0, CONFIG.HEIGHT - 60),
+        color(...CONFIG.COLORS.PLATFORM_EDGE),
+    ]);
+
+    // Screen door width (train door should fit between these)
+    const DOOR_WIDTH = 30;
+
+    // Select which carriage door is the target (0-4, carriage 5 is driver - never target)
+    // Station 0 (level 1): carriage 4 (5th carriage, index 4)
+    // Station 1 (level 2): carriage 3 (4th carriage, index 3)
+    // Station 2+: random from 0-4
+    let targetDoorCarriage;
+    if (station === 0) {
+        targetDoorCarriage = 4;  // Carriage 5 (last passenger carriage)
+    } else if (station === 1) {
+        targetDoorCarriage = 3;  // Carriage 4
+    } else {
+        targetDoorCarriage = Math.floor(Math.random() * 5);  // Random 0-4
+    }
+    const targetDoorOffsetX = targetDoorCarriage * CONFIG.CARRIAGE_WIDTH + 45;  // Center of door
+
+    // Single screen door at target position (mobile optimized)
+    const screenDoorX = CONFIG.TARGET_X;
+
+    // Train structure:
+    // [carriage0][carriage1][carriage2][carriage3][carriage4][driver cab]
+    // Carriages 0-4: 90px each, silver with windows and blue door
+    // Driver cab (index 5): 20px, blue with triangular shapes, NO doors/windows
+
+    const trainParts = [];
+    const PASSENGER_CARRIAGES = 5;
+    const DRIVER_CAB_WIDTH = 40;  // Matches scaled sprite width (508 * 40/500)
+    const PASSENGER_WIDTH = PASSENGER_CARRIAGES * CONFIG.CARRIAGE_WIDTH;  // 450px
+    const TOTAL_TRAIN_WIDTH = PASSENGER_WIDTH + DRIVER_CAB_WIDTH;  // 470px
+
+    const trainY = CONFIG.HEIGHT - 100;
+
+    // Main train body (silver - passenger carriages only)
+    const train = add([
+        rect(PASSENGER_WIDTH, CONFIG.TRAIN_HEIGHT),
+        pos(CONFIG.TRAIN_START, trainY),
+        color(...CONFIG.COLORS.TRAIN_SILVER),
+        "train"
+    ]);
+
+    // Build passenger carriages (0-4)
+    for (let c = 0; c < PASSENGER_CARRIAGES; c++) {
+        const carriageX = c * CONFIG.CARRIAGE_WIDTH;
+
+        // Separator between carriages
+        if (c > 0) {
+            const sep = add([
+                rect(2, CONFIG.TRAIN_HEIGHT),
+                pos(CONFIG.TRAIN_START + carriageX, trainY),
+                color(120, 120, 130),
+                "trainPart"
+            ]);
+            trainParts.push({ part: sep, offsetX: carriageX });
+        }
+
+        // Two windows per carriage
+        const win1 = add([
+            rect(14, 10),
+            pos(CONFIG.TRAIN_START + carriageX + 10, trainY + 8),
+            color(...CONFIG.COLORS.TRAIN_WINDOW),
+            "trainPart"
+        ]);
+        trainParts.push({ part: win1, offsetX: carriageX + 10 });
+
+        const win2 = add([
+            rect(14, 10),
+            pos(CONFIG.TRAIN_START + carriageX + 66, trainY + 8),
+            color(...CONFIG.COLORS.TRAIN_WINDOW),
+            "trainPart"
+        ]);
+        trainParts.push({ part: win2, offsetX: carriageX + 66 });
+
+        // Blue door (centered in carriage)
+        const door = add([
+            rect(18, CONFIG.TRAIN_HEIGHT - 6),
+            pos(CONFIG.TRAIN_START + carriageX + 36, trainY + 3),
+            color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT),
+            "trainPart"
+        ]);
+        trainParts.push({ part: door, offsetX: carriageX + 36 });
+    }
+
+    // Driver cab (carriage 5) - using sprite image
+    const cabX = PASSENGER_WIDTH;
+
+    // Driver cab sprite (stretched to fit train dimensions)
+    // Image is 476x438, stretch to ~40x40 to match train height
+    const driverCab = add([
+        sprite("driverCab"),
+        pos(CONFIG.TRAIN_START + cabX, trainY),
+        scale(vec2(DRIVER_CAB_WIDTH / 476, CONFIG.TRAIN_HEIGHT / 438)),
+        "trainPart"
+    ]);
+    trainParts.push({ part: driverCab, offsetX: cabX });
+
+    // Arrow indicator that follows target door on train (fades out over time)
+    // targetDoorOffsetX already points to center of the door (carriageX + 45)
+    const arrowOffsetX = targetDoorOffsetX;
+    const arrowOffsetY = -25;  // Above the train
+
+    // Arrow body (vertical line)
+    const arrowBody = add([
+        rect(4, 16),
+        pos(0, 0),
+        anchor("center"),
+        color(...CONFIG.COLORS.TARGET),
+        opacity(1),
+        "arrow"
+    ]);
+
+    // Arrow head left
+    const arrowLeft = add([
+        rect(4, 10),
+        pos(0, 0),
+        color(...CONFIG.COLORS.TARGET),
+        opacity(1),
+        rotate(-45),
+        anchor("top"),
+        "arrow"
+    ]);
+
+    // Arrow head right
+    const arrowRight = add([
+        rect(4, 10),
+        pos(0, 0),
+        color(...CONFIG.COLORS.TARGET),
+        opacity(1),
+        rotate(45),
+        anchor("top"),
+        "arrow"
+    ]);
+
+    // Arrow fade and position tracking
+    let arrowOpacity = 1;
+    const arrowFadeTime = 4;
+    let arrowTime = 0;
+
+    function updateArrow() {
+        // Calculate arrow position based on train position
+        const arrowX = train.pos.x + arrowOffsetX;
+        const arrowY = train.pos.y + arrowOffsetY;
+
+        // Update arrow positions
+        arrowBody.pos.x = arrowX;
+        arrowBody.pos.y = arrowY;
+        arrowLeft.pos.x = arrowX - 6;
+        arrowLeft.pos.y = arrowY + 6;
+        arrowRight.pos.x = arrowX + 6;
+        arrowRight.pos.y = arrowY + 6;
+
+        // Fade out over time
+        arrowTime += dt();
+        if (arrowTime < arrowFadeTime) {
+            // Pulse effect while visible
+            const pulse = 0.7 + 0.3 * Math.sin(arrowTime * 6);
+            arrowOpacity = Math.max(0, (1 - arrowTime / arrowFadeTime) * pulse);
+        } else {
+            arrowOpacity = 0;
+        }
+
+        arrowBody.opacity = arrowOpacity;
+        arrowLeft.opacity = arrowOpacity;
+        arrowRight.opacity = arrowOpacity;
+    }
+
+    // Position arrow immediately on first frame
+    updateArrow();
+
+    // Single screen door (rendered AFTER train so it appears in front)
+    // Screen door frame (outer) - semi-transparent
+    add([
+        rect(DOOR_WIDTH + 20, 55),
+        pos(screenDoorX - DOOR_WIDTH/2 - 10, CONFIG.HEIGHT - 115),
+        color(...CONFIG.COLORS.SCREEN_DOOR_FRAME),
+        opacity(0.7),
+    ]);
+
+    // Screen door opening (dark area between doors)
+    add([
+        rect(DOOR_WIDTH, 45),
+        pos(screenDoorX - DOOR_WIDTH/2, CONFIG.HEIGHT - 105),
+        color(...CONFIG.COLORS.SCREEN_DOOR),
+        opacity(0.4),
+    ]);
+
+    // Left screen door edge (yellow line)
+    add([
+        rect(4, 55),
+        pos(screenDoorX - DOOR_WIDTH/2 - 2, CONFIG.HEIGHT - 115),
+        color(...CONFIG.COLORS.TARGET),
+    ]);
+
+    // Right screen door edge (yellow line)
+    add([
+        rect(4, 55),
+        pos(screenDoorX + DOOR_WIDTH/2 - 2, CONFIG.HEIGHT - 115),
+        color(...CONFIG.COLORS.TARGET),
+    ]);
+
+    // Target marker on track
+    add([
+        rect(8, 8),
+        pos(screenDoorX - 4, CONFIG.HEIGHT - 68),
+        color(...CONFIG.COLORS.TARGET),
+    ]);
+
+    // Get train door center position (targetDoorOffsetX already points to center)
+    function getTrainDoorX() {
+        return train.pos.x + targetDoorOffsetX;
+    }
+
+    // HUD
+    const scoreText = add([
+        text(`SCORE: ${totalScore}`, { size: 12 }),
+        pos(10, 10),
+        color(...CONFIG.COLORS.TEXT),
+        fixed(),
+    ]);
+
+    add([
+        text(`STATION ${stationNumber}`, { size: 10 }),
+        pos(10, 30),
+        color(150, 150, 150),
+        fixed(),
+    ]);
+
+    add([
+        text(stationName.toUpperCase(), { size: 14 }),
+        pos(CONFIG.WIDTH - 10, 10),
+        anchor("topright"),
+        color(...CONFIG.COLORS.PLATFORM_EDGE),
+        fixed(),
+    ]);
+
+    const speedText = add([
+        text(`${Math.floor(velocity)} px/s`, { size: 10 }),
+        pos(CONFIG.WIDTH - 10, 30),
+        anchor("topright"),
+        color(150, 150, 150),
+        fixed(),
+    ]);
+
+    // Rating display (appears after stop)
+    let ratingText = null;
+    let scorePopup = null;
+
+    // Calculate score based on distance
+    function calculateScore(distance) {
+        if (distance <= CONFIG.ZONES.PERFECT) {
+            return { score: 1000, rating: "PERFECT!", color: CONFIG.COLORS.PERFECT };
+        } else if (distance <= CONFIG.ZONES.GREAT) {
+            return { score: 500, rating: "GREAT!", color: CONFIG.COLORS.GREAT };
+        } else if (distance <= CONFIG.ZONES.GOOD) {
+            return { score: 200, rating: "GOOD", color: CONFIG.COLORS.GOOD };
+        } else if (distance <= CONFIG.ZONES.OK) {
+            return { score: 50, rating: "OK", color: CONFIG.COLORS.OK };
+        } else {
+            return { score: 0, rating: "MISS", color: CONFIG.COLORS.MISS };
+        }
+    }
+
+    // Update train parts position
+    function updateTrainParts() {
+        // Update all train parts (windows, doors, cab elements)
+        for (const item of trainParts) {
+            item.part.pos.x = train.pos.x + item.offsetX;
+        }
+        // Update arrow indicator
+        updateArrow();
+    }
+
+    // Main game loop
+    onUpdate(() => {
+        if (phase === "approaching") {
+            train.pos.x += velocity * dt();
+            updateTrainParts();
+
+            // Auto game over if train goes way past
+            if (train.pos.x > CONFIG.WIDTH + 50) {
+                phase = "gameover";
+                playMiss();
+                wait(1, () => {
+                    go("gameover", { finalScore: totalScore, station: stationNumber });
+                });
+            }
+        } else if (phase === "braking") {
+            velocity = Math.max(0, velocity - CONFIG.BRAKE_DECEL * dt());
+            train.pos.x += velocity * dt();
+            updateTrainParts();
+            speedText.text = `${Math.floor(velocity)} px/s`;
+
+            if (velocity <= 0) {
+                phase = "stopped";
+                const distance = Math.abs(getTrainDoorX() - CONFIG.TARGET_X);
+
+                // Check for instant game over
+                if (distance > CONFIG.MISS_THRESHOLD) {
+                    playMiss();
+                    ratingText = add([
+                        text("TOO FAR!", { size: 24 }),
+                        pos(center().x, center().y - 40),
+                        anchor("center"),
+                        color(...CONFIG.COLORS.MISS),
+                    ]);
+                    wait(1.5, () => {
+                        go("gameover", { finalScore: totalScore, station: stationNumber });
+                    });
+                    return;
+                }
+
+                const result = calculateScore(distance);
+                scoreThisRound = result.score;
+                rating = result.rating;
+                ratingColor = result.color;
+                correctionTarget = CONFIG.TARGET_X;
+
+                // Play sound
+                if (result.score === 1000) playPerfect();
+                else if (result.score === 500) playGreat();
+                else if (result.score === 200) playGood();
+                else if (result.score === 50) playOk();
+                else playMiss();
+
+                // Show rating
+                ratingText = add([
+                    text(rating, { size: 24 }),
+                    pos(center().x, center().y - 40),
+                    anchor("center"),
+                    color(...ratingColor),
+                ]);
+
+                // Show score popup
+                scorePopup = add([
+                    text(`+${scoreThisRound}`, { size: 16 }),
+                    pos(center().x, center().y - 10),
+                    anchor("center"),
+                    color(...ratingColor),
+                ]);
+
+                totalScore += scoreThisRound;
+                scoreText.text = `SCORE: ${totalScore}`;
+
+                // For PERFECT stops, skip correction and go straight to next station
+                if (result.score === 1000) {
+                    wait(1, () => {
+                        go("game", { station: station + 1, totalScore: totalScore });
+                    });
+                } else {
+                    // Start correction after brief pause
+                    wait(0.8, () => {
+                        if (phase === "stopped") {
+                            phase = "correcting";
+                        }
+                    });
+                }
+            }
+        } else if (phase === "correcting") {
+            const currentDoorX = getTrainDoorX();
+            const diff = correctionTarget - currentDoorX;
+
+            if (Math.abs(diff) < 1) {
+                // Correction complete - position train so target door aligns with platform door
+                train.pos.x = CONFIG.TARGET_X - targetDoorOffsetX;
+                updateTrainParts();
+                phase = "waiting";
+
+                // Check if game over due to score
+                if (totalScore <= 0) {
+                    wait(0.5, () => {
+                        go("gameover", { finalScore: 0, station: stationNumber });
+                    });
+                } else {
+                    wait(1, () => {
+                        go("game", { station: station + 1, totalScore: totalScore });
+                    });
+                }
+            } else {
+                // Move toward target
+                const moveDir = diff > 0 ? 1 : -1;
+                const moveAmount = Math.min(Math.abs(diff), CONFIG.CORRECTION_SPEED * dt());
+                train.pos.x += moveDir * moveAmount;
+                updateTrainParts();
+
+                // Drain points during correction
+                const pointsLost = Math.ceil(moveAmount * CONFIG.POINT_DRAIN_RATE);
+                totalScore = Math.max(0, totalScore - pointsLost);
+                scoreText.text = `SCORE: ${totalScore}`;
+
+                // Play correction rolling sound regularly while moving
+                correctionSoundTimer += dt();
+                if (correctionSoundTimer > 0.08) {
+                    playCorrection();
+                    correctionSoundTimer = 0;
+                }
+            }
+        }
+    });
+
+    // Input
+    const brake = () => {
+        if (phase === "approaching") {
+            phase = "braking";
+            playBrake();
+            shake(3);
+        }
+    };
+
+    onKeyPress("space", brake);
+    onClick(brake);
+});
+
+// ============================================
+// GAME OVER SCENE
+// ============================================
+scene("gameover", ({ finalScore, station }) => {
+    playGameOver();
+
+    const isNewHigh = isHighScore(finalScore);
+    if (finalScore > 0) {
+        saveHighScore(finalScore);
+    }
+
+    // Game Over text
+    add([
+        text("GAME OVER", { size: 28 }),
+        pos(center().x, 80),
+        anchor("center"),
+        color(231, 76, 60),
+    ]);
+
+    // Stations reached
+    add([
+        text(`Stations: ${station}`, { size: 14 }),
+        pos(center().x, 130),
+        anchor("center"),
+        color(200, 200, 200),
+    ]);
+
+    // Final score
+    add([
+        text(`FINAL SCORE`, { size: 12 }),
+        pos(center().x, 180),
+        anchor("center"),
+        color(150, 150, 150),
+    ]);
+
+    add([
+        text(`${finalScore}`, { size: 32 }),
+        pos(center().x, 220),
+        anchor("center"),
+        color(255, 200, 0),
+    ]);
+
+    // New high score celebration
+    if (isNewHigh && finalScore > 0) {
+        const newHighText = add([
+            text("NEW HIGH SCORE!", { size: 16 }),
+            pos(center().x, 265),
+            anchor("center"),
+            color(46, 204, 113),
+        ]);
+
+        // Flash effect
+        let visible = true;
+        loop(0.3, () => {
+            visible = !visible;
+            newHighText.opacity = visible ? 1 : 0.5;
+        });
+    }
+
+    // High scores list
+    const scores = getHighScores();
+    if (scores.length > 0) {
+        add([
+            text("HIGH SCORES", { size: 10 }),
+            pos(center().x, 310),
+            anchor("center"),
+            color(150, 150, 150),
+        ]);
+
+        scores.slice(0, 5).forEach((score, i) => {
+            const isCurrentScore = score === finalScore && isNewHigh;
+            add([
+                text(`${i + 1}. ${score}`, { size: 10 }),
+                pos(center().x, 330 + i * 16),
+                anchor("center"),
+                color(isCurrentScore ? 46 : 200, isCurrentScore ? 204 : 200, isCurrentScore ? 113 : 200),
+            ]);
+        });
+    }
+
+    // Restart prompt
+    add([
+        text("TAP TO RETRY", { size: 14 }),
+        pos(center().x, CONFIG.HEIGHT - 40),
+        anchor("center"),
+        color(255, 255, 255),
+    ]);
+
+    // Input
+    const restart = () => {
+        go("title");
+    };
+
+    onKeyPress("space", restart);
+    onClick(restart);
+});
+
+// ============================================
+// START GAME
+// ============================================
+go("title");
+    </script>
+</body>
+</html>
