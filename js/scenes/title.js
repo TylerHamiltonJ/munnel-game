@@ -37,27 +37,58 @@ scene("title", () => {
         ]);
     }
 
-    // Draw mini train (simplified)
+    // Draw mini train (v2 - matching game train style)
     const trainY = 340;
-    // Silver passenger section
+    const carriageW = 50;  // Width of each carriage
+    const carriageH = 24;  // Height of train
+    const cabW = 22;       // Driver cab width
+    const totalWidth = carriageW * 3 + cabW;  // 3 carriages + cab
+    const startX = center().x - totalWidth / 2;
+
+    // Silver body for all 3 carriages
     add([
-        rect(50, 20),
-        pos(center().x - 15, trainY),
-        anchor("center"),
+        rect(carriageW * 3, carriageH),
+        pos(startX, trainY),
         color(...CONFIG.COLORS.TRAIN_SILVER),
     ]);
-    // Blue door
-    add([
-        rect(8, 16),
-        pos(center().x - 15, trainY),
-        anchor("center"),
-        color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT),
-    ]);
-    // Driver cab sprite (stretched for mini train, positioned to connect)
+
+    // Carriage 0
+    add([rect(7, 6), pos(startX + 5, trainY + 5), color(20, 20, 30)]);  // Window L
+    add([rect(7, 6), pos(startX + 38, trainY + 5), color(20, 20, 30)]); // Window R
+    add([rect(5, 18), pos(startX + 19, trainY + 3), color(100, 100, 110)]); // Door L outline
+    add([rect(4, 16), pos(startX + 19.5, trainY + 4), color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT)]); // Door L
+    add([rect(5, 18), pos(startX + 24, trainY + 3), color(100, 100, 110)]); // Door R outline
+    add([rect(4, 16), pos(startX + 24.5, trainY + 4), color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT)]); // Door R
+
+    // Separator 1
+    add([rect(2, carriageH), pos(startX + carriageW, trainY), color(100, 100, 110)]);
+
+    // Carriage 1
+    const c1 = startX + carriageW;
+    add([rect(7, 6), pos(c1 + 5, trainY + 5), color(20, 20, 30)]);  // Window L
+    add([rect(7, 6), pos(c1 + 38, trainY + 5), color(20, 20, 30)]); // Window R
+    add([rect(5, 18), pos(c1 + 19, trainY + 3), color(100, 100, 110)]); // Door L outline
+    add([rect(4, 16), pos(c1 + 19.5, trainY + 4), color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT)]); // Door L
+    add([rect(5, 18), pos(c1 + 24, trainY + 3), color(100, 100, 110)]); // Door R outline
+    add([rect(4, 16), pos(c1 + 24.5, trainY + 4), color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT)]); // Door R
+
+    // Separator 2
+    add([rect(2, carriageH), pos(startX + carriageW * 2, trainY), color(100, 100, 110)]);
+
+    // Carriage 2
+    const c2 = startX + carriageW * 2;
+    add([rect(7, 6), pos(c2 + 5, trainY + 5), color(20, 20, 30)]);  // Window L
+    add([rect(7, 6), pos(c2 + 38, trainY + 5), color(20, 20, 30)]); // Window R
+    add([rect(5, 18), pos(c2 + 19, trainY + 3), color(100, 100, 110)]); // Door L outline
+    add([rect(4, 16), pos(c2 + 19.5, trainY + 4), color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT)]); // Door L
+    add([rect(5, 18), pos(c2 + 24, trainY + 3), color(100, 100, 110)]); // Door R outline
+    add([rect(4, 16), pos(c2 + 24.5, trainY + 4), color(...CONFIG.COLORS.TRAIN_BLUE_LIGHT)]); // Door R
+
+    // Driver cab sprite
     add([
         sprite("driverCab"),
-        pos(center().x + 10, trainY - 10),
-        scale(vec2(20 / 476, 20 / 438)),  // Stretch to ~20x20 for mini train
+        pos(startX + carriageW * 3, trainY),
+        scale(vec2(cabW / 476, carriageH / 438)),
     ]);
 
     // Start prompt
@@ -77,6 +108,7 @@ scene("title", () => {
 
     // Input
     const startGame = () => {
+        vibrateButton();
         initAudio();
         // Randomly decide station direction (50% chance each way)
         stationsReversed = Math.random() < 0.5;

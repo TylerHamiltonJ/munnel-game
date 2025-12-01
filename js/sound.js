@@ -9,6 +9,19 @@ function initAudio() {
     }
 }
 
+// ============================================
+// HAPTIC FEEDBACK (Vibration API)
+// ============================================
+function vibrate(pattern) {
+    if (navigator.vibrate) {
+        navigator.vibrate(pattern);
+    }
+}
+
+function vibrateButton() {
+    vibrate(15);  // Light tap for button presses
+}
+
 function playTone(frequency, duration, type = 'sine', volume = 0.3) {
     if (!audioCtx) return;
     const osc = audioCtx.createOscillator();
@@ -24,6 +37,7 @@ function playTone(frequency, duration, type = 'sine', volume = 0.3) {
 }
 
 function playBrake() {
+    vibrate(50);  // Short pulse when braking
     if (!audioCtx) return;
     const bufferSize = audioCtx.sampleRate * 0.3;
     const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
@@ -46,33 +60,40 @@ function playBrake() {
 }
 
 function playPerfect() {
+    vibrate([30, 50, 30]);  // Double tap celebration
     playTone(880, 0.15, 'sine', 0.3);
     setTimeout(() => playTone(1100, 0.2, 'sine', 0.3), 100);
 }
 
 function playGreat() {
+    vibrate([25, 40, 25]);  // Quick double tap
     playTone(660, 0.15, 'sine', 0.25);
     setTimeout(() => playTone(880, 0.15, 'sine', 0.25), 80);
 }
 
 function playGood() {
+    vibrate(30);  // Single tap
     playTone(440, 0.2, 'square', 0.15);
 }
 
 function playOk() {
+    vibrate(20);  // Light tap
     playTone(330, 0.2, 'triangle', 0.2);
 }
 
 function playMiss() {
+    vibrate([40, 30, 60]);  // Error pattern
     playTone(220, 0.3, 'sawtooth', 0.15);
     setTimeout(() => playTone(165, 0.3, 'sawtooth', 0.15), 150);
 }
 
 function playCorrection() {
+    vibrate(10);  // Short pulse for each rollback tick
     playTone(200, 0.1, 'sine', 0.1);
 }
 
 function playGameOver() {
+    vibrate([50, 100, 50, 100, 100]);  // Descending pattern
     playTone(440, 0.3, 'sine', 0.2);
     setTimeout(() => playTone(349, 0.3, 'sine', 0.2), 200);
     setTimeout(() => playTone(294, 0.3, 'sine', 0.2), 400);

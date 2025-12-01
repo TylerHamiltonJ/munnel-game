@@ -60,7 +60,8 @@ scene("gameover", ({ finalScore, station }) => {
     // Share footer
     const shareY = isNewHigh && finalScore > 0 ? 295 : 265;
     const shareText = `I reached station ${station} with a score of ${finalScore} in Munneler! Can you beat my score? 🚇`;
-    const gameUrl = window.location.href;
+    const shareTextWithHashtag = `${shareText} #Munneler`;
+    const gameUrl = 'https://munneler.fun';
 
     add([
         text("SHARE", { size: 10 }),
@@ -89,8 +90,9 @@ scene("gameover", ({ finalScore, station }) => {
         color(255, 255, 255),
     ]);
     fbButton.onClick(() => {
+        vibrateButton();
         const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(gameUrl)}&quote=${encodeURIComponent(shareText)}`;
-        window.open(fbUrl, '_blank');
+        window.location.href = fbUrl;
     });
 
     // Bluesky button
@@ -107,8 +109,9 @@ scene("gameover", ({ finalScore, station }) => {
         anchor("center"),
     ]);
     bskyButton.onClick(() => {
-        const bskyUrl = `https://bsky.app/intent/compose?text=${encodeURIComponent(shareText + ' ' + gameUrl)}`;
-        window.open(bskyUrl, '_blank');
+        vibrateButton();
+        const bskyUrl = `https://bsky.app/intent/compose?text=${encodeURIComponent(shareTextWithHashtag + ' ' + gameUrl)}`;
+        window.location.href = bskyUrl;
     });
 
     // Twitter/X button
@@ -126,8 +129,9 @@ scene("gameover", ({ finalScore, station }) => {
         color(255, 255, 255),
     ]);
     xButton.onClick(() => {
-        const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(gameUrl)}`;
-        window.open(tweetUrl, '_blank');
+        vibrateButton();
+        const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareTextWithHashtag)}&url=${encodeURIComponent(gameUrl)}`;
+        window.location.href = tweetUrl;
     });
 
 
@@ -176,11 +180,13 @@ scene("gameover", ({ finalScore, station }) => {
         color(255, 255, 255),
     ]);
     kofiButton.onClick(() => {
-        window.open('https://ko-fi.com/YOUR_KOFI_USERNAME', '_blank');
+        vibrateButton();
+        window.location.href = 'https://ko-fi.com/abrahamilton';
     });
 
     // Input
     const restart = () => {
+        vibrateButton();
         go("title");
     };
 
