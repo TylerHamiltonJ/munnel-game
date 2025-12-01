@@ -10,12 +10,6 @@ scene("title", () => {
         color(255, 200, 0),
     ]);
 
-    add([
-        text("Melbourne Metro Tunnel", { size: 12 }),
-        pos(center().x, 115),
-        anchor("center"),
-        color(200, 200, 200),
-    ]);
 
     // Instructions
     add([

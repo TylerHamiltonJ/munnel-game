@@ -533,17 +533,18 @@ scene("game", ({ station, totalScore }) => {
     let scorePopup = null;
 
     // Calculate score based on distance
+    // Scores drain during correction (1 point per pixel moved)
     function calculateScore(distance) {
         if (distance <= CONFIG.ZONES.PERFECT) {
             return { score: 1000, rating: "PERFECT!", color: CONFIG.COLORS.PERFECT };
         } else if (distance <= CONFIG.ZONES.GREAT) {
             return { score: 500, rating: "GREAT!", color: CONFIG.COLORS.GREAT };
         } else if (distance <= CONFIG.ZONES.GOOD) {
-            return { score: 200, rating: "GOOD", color: CONFIG.COLORS.GOOD };
+            return { score: 250, rating: "GOOD", color: CONFIG.COLORS.GOOD };
         } else if (distance <= CONFIG.ZONES.OK) {
-            return { score: 50, rating: "OK", color: CONFIG.COLORS.OK };
+            return { score: 150, rating: "OK", color: CONFIG.COLORS.OK };
         } else {
-            return { score: 0, rating: "MISS", color: CONFIG.COLORS.MISS };
+            return { score: 100, rating: "BAD", color: CONFIG.COLORS.MISS };
         }
     }
 
@@ -830,7 +831,7 @@ scene("game", ({ station, totalScore }) => {
                     color(...ratingColor),
                 ]);
 
-                // Show score popup
+                // Show score popup (will be updated during correction)
                 scorePopup = add([
                     text(`+${scoreThisRound}`, { size: 16 }),
                     pos(center().x, center().y - 10),
@@ -838,12 +839,11 @@ scene("game", ({ station, totalScore }) => {
                     color(...ratingColor),
                 ]);
 
-                totalScore += scoreThisRound;
-                scoreText.text = `SCORE: ${totalScore}`;
-
                 // For PERFECT stops, open doors immediately
                 if (result.score === 1000) {
                     phase = "waitingForDoors";  // Prevent correction from starting
+                    totalScore += scoreThisRound;
+                    scoreText.text = `SCORE: ${totalScore}`;
                     wait(0.5, () => {
                         openDoors();
                     });
@@ -866,17 +866,14 @@ scene("game", ({ station, totalScore }) => {
                 train.pos.x = CONFIG.TARGET_X - targetDoorOffsetX;
                 updateTrainParts();
 
-                // Check if game over due to score
-                if (totalScore <= 0) {
-                    wait(0.5, () => {
-                        go("gameover", { finalScore: 0, station: stationNumber });
-                    });
-                } else {
-                    // Open doors after correction
-                    wait(0.3, () => {
-                        openDoors();
-                    });
-                }
+                // Add remaining score to total
+                totalScore += scoreThisRound;
+                scoreText.text = `SCORE: ${totalScore}`;
+
+                // Open doors after correction
+                wait(0.3, () => {
+                    openDoors();
+                });
             } else {
                 // Move toward target
                 const moveDir = diff > 0 ? 1 : -1;
@@ -884,10 +881,12 @@ scene("game", ({ station, totalScore }) => {
                 train.pos.x += moveDir * moveAmount;
                 updateTrainParts();
 
-                // Drain points during correction
-                const pointsLost = Math.ceil(moveAmount * CONFIG.POINT_DRAIN_RATE);
-                totalScore = Math.max(0, totalScore - pointsLost);
-                scoreText.text = `SCORE: ${totalScore}`;
+                // Drain points from this round's score during correction
+                const pointsLost = Math.round(moveAmount * CONFIG.POINT_DRAIN_RATE);
+                scoreThisRound = Math.max(0, scoreThisRound - pointsLost);
+                if (scorePopup) {
+                    scorePopup.text = `+${scoreThisRound}`;
+                }
 
                 // Play correction rolling sound regularly while moving
                 correctionSoundTimer += dt();
